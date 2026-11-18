@@ -5,6 +5,7 @@ const allowed = new Set([
   'selectProject',
   'selectScheme',
   'selectSimulator',
+  'selectConfiguration',
   'build',
   'run',
   'test',
@@ -13,6 +14,7 @@ const allowed = new Set([
   'cancel',
   'showOutput',
   'toggleDebugger',
+  'selectDerivedData',
   'packages',
 ]);
 export class Sidebar {
@@ -43,14 +45,17 @@ export class Sidebar {
     <button class="selector" data-action="selectProject"><span class="label">PROJECT / WORKSPACE <span class="chevron">›</span></span><span class="value" id="project">Choose a project…</span></button>
     <button class="selector" data-action="selectScheme"><span class="label">SCHEME <span class="chevron">›</span></span><span class="value" id="scheme">Choose a scheme…</span></button>
     <button class="selector" data-action="selectSimulator"><span class="label">SIMULATOR <span class="chevron">›</span></span><span class="value" id="device">Choose a simulator…</span></button>
-    <div class="hint" id="configuration"></div><button class="selector" data-action="toggleDebugger" id="debug" role="switch" aria-checked="false"><span class="label">DEBUGGER</span><span class="value" id="debugText">Off</span></button><div class="actions"><button class="primary" data-action="run">▶ &nbsp; Build &amp; Run</button><button class="secondary" data-action="build">Build only</button><button class="secondary" data-action="test">Run tests</button><button class="secondary" data-action="clean">Clean build folder</button><button class="secondary" data-action="archive">Archive for device</button><button class="secondary" data-action="packages">Package dependencies</button><button class="secondary" data-action="cancel" id="cancel" hidden>Cancel operation</button></div>
+    <button class="selector" data-action="selectDerivedData"><span class="label">DERIVED DATA <span class="chevron">›</span></span><span class="value" id="derivedData">Default</span></button>
+    <button class="selector" data-action="selectConfiguration"><span class="label">CONFIGURATION <span class="chevron">›</span></span><span class="value" id="configuration">Debug</span></button>
+    <button class="selector" data-action="toggleDebugger" id="debug" role="switch" aria-checked="false"><span class="label">DEBUGGER</span><span class="value" id="debugText">Off</span></button><div class="actions"><button class="primary" data-action="run">▶ &nbsp; Build &amp; Run</button><button class="secondary" data-action="build">Build only</button><button class="secondary" data-action="test">Run tests</button><button class="secondary" data-action="clean">Clean build folder</button><button class="secondary" data-action="archive">Archive for device</button><button class="secondary" data-action="packages">Package dependencies</button><button class="secondary" data-action="cancel" id="cancel" hidden>Cancel operation</button></div>
     <div id="error" role="alert"></div><div class="footer"><button class="text" data-action="showOutput">Open build output ↗</button><p class="hint">Uses Xcode tools on this Mac.<br>Apps open in Apple's Simulator.</p></div>
     <script nonce="${nonce}">
     const vscode=acquireVsCodeApi();
     document.querySelectorAll('[data-action]').forEach(button=>button.addEventListener('click',()=>vscode.postMessage({action:button.dataset.action})));
     window.addEventListener('message',({data:s})=>{
       for(const key of ['project','scheme','device']){const el=document.getElementById(key);el.textContent=s[key]||({project:'Choose a project…',scheme:'Choose a scheme…',device:'Choose a simulator…'}[key]);el.title=s[key+'Detail']||s[key]||'';}
-      document.getElementById('configuration').textContent=s.configuration+' · iOS Simulator';
+      const derived=document.getElementById('derivedData');derived.textContent=s.derivedData||'Default · per-project storage';derived.title=s.derivedDataDetail||'';
+      document.getElementById('configuration').textContent=(s.configuration||'Debug')+' · iOS Simulator';
       document.getElementById('debug').setAttribute('aria-checked',String(!!s.debug));document.getElementById('debugText').textContent=s.debug?'On · attaches on Build & Run':'Off';
       document.getElementById('statusText').textContent=s.status;
       document.getElementById('status').className='status'+(s.busy?' busy':s.error?' error':'');

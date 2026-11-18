@@ -29,6 +29,8 @@ export function activate(context: vscode.ExtensionContext): void {
     status,
     error: lastError,
     configuration: config().get('configuration'),
+    derivedData: config().get<string>('derivedDataPath') || '',
+    derivedDataDetail: project ? derivedDataLocation() : '',
     debug: !!config().get('attachDebugger'),
   }));
   context.subscriptions.push(
@@ -173,6 +175,77 @@ export function activate(context: vscode.ExtensionContext): void {
     remember();
     sidebar.refresh();
   }
+  // Configuration lists rarely change, so cache them per project and invalidate when any project file changes.
+  type ConfigurationCache = { signature: string; configurations: string[] };
+  const configurationCache = new Map<string, ConfigurationCache>(
+    Object.entries(context.workspaceState.get('VXCode.configurations', {})),
+  );
+  const saveConfigurations = () =>
+    context.workspaceState.update('VXCode.configurations', Object.fromEntries(configurationCache));
+  function configurationSources(): { projects: string[]; signature: string } {
+    const mtime = (file: string) => {
+      try {
+        return fs.statSync(file).mtimeMs;
+      } catch (_) {
+        return 0;
+      }
+    };
+    let projects = [project];
+    const markers: string[] = [];
+    if (project.endsWith('.xcworkspace')) {
+      const contents = path.join(project, 'contents.xcworkspacedata');
+      markers.push(contents);
+      let xml = '';
+      try {
+        xml = fs.readFileSync(contents, 'utf8');
+      } catch (_) {
+        /* Unreadable workspace; fall back to the defaults below. */
+      }
+      projects = core.workspaceProjects(xml, project).filter((p) => fs.existsSync(p));
+    }
+    markers.push(...projects.map((p) => path.join(p, 'project.pbxproj')));
+    return { projects, signature: markers.map((m) => `${m}:${mtime(m)}`).join('|') };
+  }
+  async function projectConfigurations(refresh = false): Promise<string[]> {
+    const { projects, signature } = configurationSources();
+    const cached = configurationCache.get(project);
+    if (!refresh && cached?.signature === signature && cached.configurations.length) return cached.configurations;
+    const data: core.XcodeProjectData[] = [];
+    for (const p of projects)
+      data.push(await json('/usr/bin/xcodebuild', [...core.projectArgs(p), '-list', '-json'], path.dirname(p)));
+    const configurations = core.configurations(data);
+    if (configurations.length) {
+      configurationCache.set(project, { signature, configurations });
+      await saveConfigurations();
+    }
+    return configurations.length ? configurations : ['Debug', 'Release'];
+  }
+  async function selectConfiguration() {
+    if (!project) await selectProject();
+    const current = config().get<string>('configuration') || 'Debug';
+    let refresh = false;
+    for (;;) {
+      const choices = await projectConfigurations(refresh);
+      const picked = await vscode.window.showQuickPick(
+        [
+          ...choices.map((c) => ({ label: c, description: c === current ? 'Current' : undefined, value: c })),
+          { label: '$(refresh) Reload configurations', description: 'Read them again from Xcode', value: '' },
+        ],
+        { placeHolder: `Select build configuration (current: ${current})` },
+      );
+      if (!picked) throw new Error('Selection cancelled.');
+      if (!picked.value) {
+        refresh = true;
+        continue;
+      }
+      const target = vscode.workspace.workspaceFolders?.length
+        ? vscode.ConfigurationTarget.Workspace
+        : vscode.ConfigurationTarget.Global;
+      await config().update('configuration', picked.value, target);
+      sidebar.refresh();
+      return;
+    }
+  }
   async function selectSimulator() {
     const choices = core.simulators(await json('/usr/bin/xcrun', ['simctl', 'list', 'devices', 'available', '-j']));
     if (!choices.length)
@@ -191,11 +264,64 @@ export function activate(context: vscode.ExtensionContext): void {
     remember();
     sidebar.refresh();
   }
-  async function derivedDataPath() {
+  function derivedDataLocation() {
+    const folder = vscode.workspace.getWorkspaceFolder(vscode.Uri.file(project))?.uri.fsPath;
+    const custom = core.customDerivedData(
+      config().get<string>('derivedDataPath'),
+      os.homedir(),
+      folder,
+      path.dirname(project),
+    );
     const hash = crypto.createHash('sha256').update(project).digest('hex').slice(0, 16);
-    const derived = path.join(context.globalStorageUri.fsPath, 'DerivedData', hash);
+    return custom || path.join(context.globalStorageUri.fsPath, 'DerivedData', hash);
+  }
+  async function derivedDataPath() {
+    const derived = derivedDataLocation();
     await vscode.workspace.fs.createDirectory(vscode.Uri.file(derived));
     return derived;
+  }
+  async function selectDerivedData() {
+    const current = config().get<string>('derivedDataPath') || '';
+    const items = [
+      { label: '$(folder) Choose folder…', value: 'browse' },
+      { label: '$(edit) Enter path…', description: 'Supports ~ and ${workspaceFolder}', value: 'enter' },
+      ...(current
+        ? [{ label: '$(discard) Use default', description: "VXCode's per-project storage", value: 'reset' }]
+        : []),
+    ];
+    const picked = await vscode.window.showQuickPick(items, {
+      placeHolder: current ? `DerivedData: ${current}` : 'DerivedData: default (per-project VXCode storage)',
+    });
+    if (!picked) return;
+    const workspaceFolder = project
+      ? vscode.workspace.getWorkspaceFolder(vscode.Uri.file(project))
+      : vscode.workspace.workspaceFolders?.[0];
+    let value = '';
+    if (picked.value === 'browse') {
+      const uri = (
+        await vscode.window.showOpenDialog({
+          canSelectFiles: false,
+          canSelectFolders: true,
+          canSelectMany: false,
+          openLabel: 'Use as DerivedData',
+          defaultUri: workspaceFolder?.uri,
+        })
+      )?.[0];
+      if (!uri) return;
+      value = core.portableDerivedData(uri.fsPath, workspaceFolder?.uri.fsPath);
+    } else if (picked.value === 'enter') {
+      const entered = await vscode.window.showInputBox({
+        prompt: 'DerivedData folder (absolute, ~/…, ${workspaceFolder}/…, or relative to the workspace folder)',
+        value: current || '${workspaceFolder}/.build/DerivedData',
+        validateInput: (text) => (text.trim() ? undefined : 'Enter a path, or choose "Use default".'),
+      });
+      if (entered === undefined) return;
+      value = entered.trim();
+    }
+    const target = vscode.workspace.workspaceFolders?.length
+      ? vscode.ConfigurationTarget.Workspace
+      : vscode.ConfigurationTarget.Global;
+    await config().update('derivedDataPath', value || undefined, target);
   }
   async function prepare(needsDevice = true) {
     if (!project) await selectProject();
@@ -558,6 +684,7 @@ export function activate(context: vscode.ExtensionContext): void {
   register('selectProject', selectProject);
   register('selectScheme', selectScheme);
   register('selectSimulator', selectSimulator);
+  register('selectConfiguration', selectConfiguration);
   register('test', () => build(false, true));
   register('build', () => build(false));
   register('run', () => build(true));
@@ -566,6 +693,7 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.commands.registerCommand('VXCode.cancel', stop),
     vscode.commands.registerCommand('VXCode.showOutput', () => output.show()),
+    vscode.commands.registerCommand('VXCode.selectDerivedData', selectDerivedData),
     vscode.commands.registerCommand('VXCode.toggleDebugger', () =>
       config().update('attachDebugger', !config().get<boolean>('attachDebugger'), vscode.ConfigurationTarget.Global),
     ),

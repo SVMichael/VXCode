@@ -151,3 +151,41 @@ assert.strictEqual(core.launchedPid('An error was encountered'), undefined);
   }
 }
 console.log('All core tests passed.');
+assert.strictEqual(core.customDerivedData('', '/Users/me', '/ws', '/ws/App'), undefined);
+assert.strictEqual(core.customDerivedData('  ', '/Users/me', '/ws', '/ws/App'), undefined);
+assert.strictEqual(core.customDerivedData('/tmp/DD', '/Users/me', '/ws', '/ws/App'), '/tmp/DD');
+assert.strictEqual(core.customDerivedData('~/DD', '/Users/me', '/ws', '/ws/App'), '/Users/me/DD');
+assert.strictEqual(
+  core.customDerivedData('${workspaceFolder}/.build/DD', '/Users/me', '/ws', '/ws/App'),
+  '/ws/.build/DD',
+);
+assert.strictEqual(core.customDerivedData('build/DD', '/Users/me', '/ws', '/ws/App'), '/ws/build/DD');
+assert.strictEqual(core.customDerivedData('build/DD', '/Users/me', undefined, '/proj'), '/proj/build/DD');
+assert.strictEqual(core.portableDerivedData('/ws/.build/DD', '/ws'), '${workspaceFolder}/.build/DD');
+assert.strictEqual(core.portableDerivedData('/ws', '/ws'), '${workspaceFolder}');
+assert.strictEqual(core.portableDerivedData('/other/DD', '/ws'), '/other/DD');
+assert.strictEqual(core.portableDerivedData('/ws-two/DD', '/ws'), '/ws-two/DD');
+assert.strictEqual(core.portableDerivedData('/other/DD', undefined), '/other/DD');
+assert.deepStrictEqual(
+  core.configurations([
+    { project: { configurations: ['Release', 'Debug'] } },
+    { project: { configurations: ['Debug', 'Staging'] } },
+    { workspace: { schemes: ['App'] } },
+  ]),
+  ['Debug', 'Release', 'Staging'],
+);
+assert.deepStrictEqual(core.configurations([]), []);
+assert.deepStrictEqual(
+  core.workspaceProjects(
+    `<?xml version="1.0"?><Workspace version="1.0">
+      <FileRef location = "group:App.xcodeproj"></FileRef>
+      <FileRef location = "container:Libs/Lib.xcodeproj"></FileRef>
+      <FileRef location = "absolute:/abs/Other.xcodeproj"></FileRef>
+      <FileRef location = "group:Pods/Pods.xcodeproj"></FileRef>
+      <FileRef location = "group:App.xcodeproj"></FileRef>
+      <FileRef location = "group:README.md"></FileRef>
+    </Workspace>`,
+    '/ws/App.xcworkspace',
+  ),
+  ['/ws/App.xcodeproj', '/ws/Libs/Lib.xcodeproj', '/abs/Other.xcodeproj', '/ws/Pods/Pods.xcodeproj'],
+);
