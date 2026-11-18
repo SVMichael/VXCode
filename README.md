@@ -3,7 +3,7 @@
 
 # VXCode
 
-VXCode is a VS Code extension for building and running iOS Simulator apps with Xcode on macOS.
+VXCode is a VS Code extension for Building and running Apple apps directly from VS Code.
 
 ## Requirements
 
